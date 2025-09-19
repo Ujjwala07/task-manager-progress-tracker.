@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Task Manager with Progress Tracker</title>
+<style>
+  /* Simple responsive styling */
+  :root {
+    --bg: #f6f7fb;
+    --card: #ffffff;
+    --accent: #0b7bff;
+    --muted: #6b7280;
+    --danger: #ef4444;
+    --success: #10b981;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    background: var(--bg);
+    margin: 0;
+    padding: 24px;
+    display: flex;
+    justify-content: center;
+  }
+  .wrap {
+    width: 100%;
+    max-width: 760px;
+  }
+  header {
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:12px;
+    margin-bottom:18px;
+  }
+  h1 { margin:0; font-size:1.25rem; }
+  .card {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 6px 18px rgba(20,20,50,0.06);
+  }
+  form { display:flex; gap:8px; margin-bottom:12px; }
+  input[type="text"] {
+    flex:1;
+    padding:10px 12px;
+    border-radius:8px;
+    border:1px solid #e6e9ef;
+    font-size:1rem;
+  }
+  button { padding:10px 12px; border-radius:8px; border:none; background:var(--accent); color:#fff; cursor:pointer; }
+  .controls { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+  .filters button { background:transparent; border:1px solid #e6e9ef; padding:8px 10px; border-radius:8px; cursor:pointer; }
+  .filters button.active { border-color:var(--accent); color:var(--accent); font-weight:600; }
+  #progress { margin:12px 0; }
+  .progress-outer { background:#eef2ff; border-radius:999px; height:12px; overflow:hidden; }
+  .progress-inner { height:100%; width:0%; background:linear-gradient(90deg,var(--accent),#7cc8ff); transition: width .25s ease; }
+  .progress-row { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px; }
+  ul#task-list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:8px; }
+  li.task {
+    display:flex; align-items:center; gap:10px; padding:10px; border-radius:8px; border:1px solid #f0f2f5;
+    background:linear-gradient(180deg, rgba(255,255,255,0.6), rgba(255,255,255,0.9));
+  }
+  .task .text { flex:1; word-break:break-word; }
+  .task .text.done { text-decoration:line-through; color:var(--muted); }
+  .task .actions { display:flex; gap:8px; }
+  .icon-btn { background:transparent; border:1px solid #e6e9ef; padding:6px 8px; border-radius:6px; cursor:pointer; }
+  .small { font-size:0.9rem; color:var(--muted); }
+  .danger { border-color:var(--danger); color:var(--danger); }
+  @media (max-width:480px){
+    header { flex-direction:column; align-items:flex-start; gap:8px; }
+    .controls { gap:6px; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Task Manager</h1>
+      <div class="small">Local, fast & simple</div>
+    </header>
+
+    <div class="card" id="app">
+      <form id="task-form" aria-label="Add task">
+        <input id="task-input" type="text" placeholder="Add a new task (press Enter)" aria-label="Task text" />
+        <button type="submit" id="add-btn">Add</button>
+      </form>
+
+      <div class="controls">
+        <div class="filters" id="filters" role="tablist" aria-label="Filters">
+          <button data-filter="all" class="active">All</button>
+          <button data-filter="active">Active</button>
+          <button data-filter="completed">Completed</button>
+        </div>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <button id="clear-completed" class="icon-btn small">Clear completed</button>
+        </div>
+      </div>
+
+      <div id="progress">
+        <div class="progress-row">
+          <div class="small" id="progress-text">0 tasks — 0% done</div>
+          <div class="small" id="task-count">0 total</div>
+        </div>
+        <div class="progress-outer" aria-hidden="true">
+          <div class="progress-inner" id="progress-bar"></div>
+        </div>
+      </div>
+
+      <ul id="task-list" aria-live="polite"></ul>
+
+    </div>
+
+    <p style="margin-top:12px; color:var(--muted); font-size:0.9rem;">Tip: click edit to rename, checkbox to mark done.</p>
+  </div>
+
+<script>
+/* Task Manager - Vanilla JS - single-file
+   Features: add, edit (prompt), toggle done, delete, filter, progress bar, localStorage
+*/
+const TASKS_KEY = 'task-manager-tasks-v1';
+let tasks = [];
+let filter = 'all';
+
+// DOM refs
+const taskForm = document.getElementById('task-form');
+const taskInput = document.getElementById('task-input');
+const taskList = document.getElementById('task-list');
+const progressBar = document.getElementById('progress-bar');
+const progressText = document.getElementById('progress-text');
+const taskCount = document.getElementById('task-count');
+const filtersEl = document.getElementById('filters');
+const clearCompletedBtn = document.getElementById('clear-completed');
+
+// load saved tasks
+function load() {
+  try {
+    const raw = localStorage.getItem(TASKS_KEY);
+    tasks = raw ? JSON.parse(raw) : [];
+  } catch (err) {
+    console.error('Failed to load tasks', err);
+    tasks = [];
+  }
+}
+function save() {
+  localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
+}
+
+// create task object
+function makeTask(text){
+  return {
+    id: String(Date.now()) + Math.floor(Math.random()*1000),
+    text: text,
+    done: false,
+    createdAt: new Date().toISOString()
+  };
+}
+
+// render UI based on tasks + filter
+function render(){
+  // filter tasks
+  const filtered = tasks.filter(t => {
+    if (filter === 'active') return !t.done;
+    if (filter === 'completed') return t.done;
+    return true;
+  });
+
+  // render list
+  taskList.innerHTML = '';
+  if (filtered.length === 0) {
+    const empty = document.createElement('div');
+    empty.textContent = 'No tasks yet.';
+    empty.className = 'small';
+    taskList.appendChild(empty);
+  } else {
+    for (const t of filtered) {
+      const li = document.createElement('li');
+      li.className = 'task';
+      li.dataset.id = t.id;
+      li.innerHTML = `
+        <input class="toggle" type="checkbox" aria-label="Mark done" ${t.done ? 'checked' : ''}/>
+        <div class="text ${t.done ? 'done' : ''}">${escapeHtml(t.text)}</div>
+        <div class="actions">
+          <button class="icon-btn edit-btn" title="Edit">✏️</button>
+          <button class="icon-btn delete-btn" title="Delete">🗑️</button>
+        </div>
+      `;
+      taskList.appendChild(li);
+    }
+  }
+
+  // progress
+  const total = tasks.length;
+  const completed = tasks.filter(t => t.done).length;
+  const pct = total === 0 ? 0 : Math.round((completed / total) * 100);
+  progressBar.style.width = pct + '%';
+  progressText.textContent = `${completed} / ${total} done — ${pct}%`;
+  taskCount.textContent = `${total} total`;
+
+  // update active filter button styles
+  Array.from(filtersEl.querySelectorAll('button')).forEach(b => {
+    b.classList.toggle('active', b.dataset.filter === filter);
+  });
+}
+
+// helpers
+function escapeHtml(str){
+  return String(str)
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;')
+    .replaceAll('"','&quot;')
+    .replaceAll("'",'&#39;');
+}
+
+// operations
+function addTask(text){
+  const t = makeTask(text);
+  tasks.unshift(t); // newest first
+  save();
+  render();
+}
+function deleteTask(id){
+  tasks = tasks.filter(t => t.id !== id);
+  save();
+  render();
+}
+function toggleDone(id, value){
+  const t = tasks.find(x => x.id === id);
+  if (!t) return;
+  t.done = value;
+  save();
+  render();
+}
+function editTask(id){
+  const t = tasks.find(x => x.id === id);
+  if (!t) return;
+  const newText = prompt('Edit task:', t.text);
+  if (newText === null) return; // user cancelled
+  const trimmed = newText.trim();
+  if (trimmed.length === 0) {
+    // if empty, do nothing (or you can delete)
+    alert('Task text cannot be empty.');
+    return;
+  }
+  t.text = trimmed;
+  save();
+  render();
+}
+
+// event listeners
+taskForm.addEventListener('submit', e => {
+  e.preventDefault();
+  const val = taskInput.value.trim();
+  if (!val) return;
+  addTask(val);
+  taskInput.value = '';
+  taskInput.focus();
+});
+
+// event delegation for list
+taskList.addEventListener('click', e => {
+  const li = e.target.closest('li.task');
+  if (!li) return;
+  const id = li.dataset.id;
+  if (e.target.matches('.delete-btn')) {
+    if (confirm('Delete this task?')) deleteTask(id);
+  } else if (e.target.matches('.edit-btn')) {
+    editTask(id);
+  } else if (e.target.matches('.toggle')) {
+    // handled by change event below; keep for click compatibility
+  }
+});
+
+// toggle checkbox change (use delegation)
+taskList.addEventListener('change', e => {
+  if (e.target.matches('.toggle')) {
+    const li = e.target.closest('li.task');
+    if (!li) return;
+    toggleDone(li.dataset.id, e.target.checked);
+  }
+});
+
+// filters
+filtersEl.addEventListener('click', e => {
+  if (!e.target.matches('button')) return;
+  filter = e.target.dataset.filter;
+  render();
+});
+
+// clear completed
+clearCompletedBtn.addEventListener('click', () => {
+  const any = tasks.some(t => t.done);
+  if (!any) return alert('No completed tasks to clear.');
+  if (confirm('Remove all completed tasks?')) {
+    tasks = tasks.filter(t => !t.done);
+    save();
+    render();
+  }
+});
+
+// initial load
+load();
+render();
+</script>
+</body>
+</html>
